@@ -42,18 +42,20 @@ func main() {
 	}
 	queueName := routing.PauseKey + "." + username
 
-	_, _, err = pubsub.DeclareAndBind(
+	newState := gamelogic.NewGameState(username)
+
+	err = pubsub.SubscribeJSON(
 		connection,
 		routing.ExchangePerilDirect,
 		queueName,
 		routing.PauseKey,
 		pubsub.QueueTypeTransient,
+		handlerPause(newState),
 	)
 	if err != nil {
-		panic(err)
+		fmt.Printf("Error subscribing to pause messages: %s\n", err)
+		return
 	}
-
-	newState := gamelogic.NewGameState(username)
 
 	for {
 		input := gamelogic.GetInput()
@@ -101,4 +103,11 @@ func main() {
 	recievedSignal := <-signalChan
 	fmt.Printf("Recieved signal: %s. Shutting down...\n", recievedSignal)
 
+}
+
+func handlerPause(gs *gamelogic.GameState) func(routing.PlayingState) {
+	return func(ps routing.PlayingState) {
+		defer fmt.Print("> ")
+		gs.HandlePause(ps)
+	}
 }

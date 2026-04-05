@@ -27,6 +27,17 @@ func main() {
 	defer channel.Close()
 	defer connection.Close()
 
+	_, _, err = pubsub.DeclareAndBind(
+		connection,
+		routing.ExchangePerilTopic,
+		routing.GameLogSlug,
+		"game_logs.*",
+		pubsub.QueueTypeDurable,
+	)
+	if err != nil {
+		panic(err)
+	}
+
 	fmt.Println("Starting Peril server...")
 	fmt.Println("Connected to RabbitMQ at:", cString)
 

@@ -8,6 +8,51 @@ import (
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
+func SubscribeJSON[T any](
+	con *amqp.Connection,
+	exchange,
+	queueName,
+	key string,
+	queueType SimpleQueueType, // an enum to represent "durable" or "transient"
+	handler func(T),
+) error {
+	ch, q, err := DeclareAndBind(
+		con,
+		exchange,
+		queueName,
+		key,
+		queueType,
+	)
+
+	msgs, err := ch.Consume(
+		q.Name,
+		"",
+		false,
+		false,
+		false,
+		false,
+		nil,
+	)
+	if err != nil {
+		return err
+	}
+
+	go func() {
+		for msg := range msgs {
+			var val T
+			err := json.Unmarshal(msg.Body, &val)
+			if err != nil {
+				log.Printf("Error unmarshaling JSON: %s", err)
+				msg.Nack(false, false) // Reject the message without requeueing
+				continue
+			}
+			handler(val)
+			msg.Ack(false) // Acknowledge the message
+		}
+	}()
+	return nil
+}
+
 func PublishJSON[T any](ch *amqp.Channel, exchange, key string, val T) error {
 	jsonBytes, err := json.Marshal(val)
 	if err != nil {
