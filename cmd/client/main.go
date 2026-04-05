@@ -2,8 +2,6 @@ package main
 
 import (
 	"fmt"
-	"os"
-	"os/signal"
 
 	"github.com/akigithub888/learn-file-storage-s3-golang-starter/internal/gamelogic"
 	"github.com/akigithub888/learn-file-storage-s3-golang-starter/internal/pubsub"
@@ -57,6 +55,20 @@ func main() {
 		return
 	}
 
+	err = pubsub.SubscribeJSON(
+		connection,
+		routing.ExchangePerilTopic,
+		routing.ArmyMovesPrefix+"."+username,
+		routing.ArmyMovesPrefix+".*",
+		pubsub.QueueTypeTransient,
+		handlerMove(newState),
+	)
+
+	if err != nil {
+		fmt.Printf("Error subscribing to army move messages: %s\n", err)
+		return
+	}
+
 	for {
 		input := gamelogic.GetInput()
 
@@ -73,14 +85,17 @@ func main() {
 			if err != nil {
 				fmt.Println(err)
 			} else {
-				fmt.Printf("Moved %d unit(s) to %s: ", len(moveResult.Units), moveResult.ToLocation)
-				for i, unit := range moveResult.Units {
-					if i > 0 {
-						fmt.Print(", ")
-					}
-					fmt.Print(unit.Rank)
+				err = pubsub.PublishJSON(
+					channel,
+					routing.ExchangePerilTopic,
+					routing.ArmyMovesPrefix+"."+username,
+					moveResult,
+				)
+				if err != nil {
+					fmt.Printf("Error publishing move result: %s\n", err)
 				}
-				fmt.Println()
+				// publish move result to other players
+				fmt.Printf("Published move result for %s\n", username)
 			}
 		} else if input[0] == "status" {
 			newState.CommandStatus()
@@ -90,7 +105,7 @@ func main() {
 			fmt.Println("Spamming not allowed yet!")
 		} else if input[0] == "quit" {
 			gamelogic.PrintQuit()
-			break
+			return
 		} else {
 			fmt.Printf("Unknown command: %s\n", input[0])
 			continue
@@ -98,10 +113,10 @@ func main() {
 	}
 
 	// wait for ctrl+c
-	signalChan := make(chan os.Signal, 1)
-	signal.Notify(signalChan, os.Interrupt)
-	recievedSignal := <-signalChan
-	fmt.Printf("Recieved signal: %s. Shutting down...\n", recievedSignal)
+	//signalChan := make(chan os.Signal, 1)
+	//signal.Notify(signalChan, os.Interrupt)
+	//recievedSignal := <-signalChan
+	//fmt.Printf("Recieved signal: %s. Shutting down...\n", recievedSignal)
 
 }
 
@@ -109,5 +124,12 @@ func handlerPause(gs *gamelogic.GameState) func(routing.PlayingState) {
 	return func(ps routing.PlayingState) {
 		defer fmt.Print("> ")
 		gs.HandlePause(ps)
+	}
+}
+
+func handlerMove(gs *gamelogic.GameState) func(gamelogic.ArmyMove) {
+	return func(am gamelogic.ArmyMove) {
+		defer fmt.Print("> ")
+		gs.HandleMove(am)
 	}
 }
