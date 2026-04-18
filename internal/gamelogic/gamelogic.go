@@ -7,6 +7,7 @@ import (
 	"math/rand"
 	"os"
 	"strings"
+	"time"
 )
 
 func PrintClientHelp() {
@@ -89,4 +90,11 @@ func (gs *GameState) CommandStatus() {
 	for _, unit := range p.Units {
 		fmt.Printf("* %v: %v, %v\n", unit.ID, unit.Location, unit.Rank)
 	}
+}
+
+type GameLog struct {
+	Message   string
+	Winner    string
+	Loser     string
+	Timestamp time.Time
 }
