@@ -19,58 +19,26 @@ const (
 )
 
 func SubscribeJSON[T any](
-	con *amqp.Connection,
+	conn *amqp.Connection,
 	exchange,
 	queueName,
 	key string,
-	queueType SimpleQueueType, // an enum to represent "durable" or "transient"
+	queueType SimpleQueueType,
 	handler func(T) AckAction,
 ) error {
-	ch, q, err := DeclareAndBind(
-		con,
+	return subscribe(
+		conn,
 		exchange,
 		queueName,
 		key,
 		queueType,
-	)
-
-	msgs, err := ch.Consume(
-		q.Name,
-		"",
-		false,
-		false,
-		false,
-		false,
-		nil,
-	)
-	if err != nil {
-		return err
-	}
-
-	go func() {
-		for msg := range msgs {
+		handler,
+		func(body []byte) (T, error) {
 			var val T
-			err := json.Unmarshal(msg.Body, &val)
-			if err != nil {
-				log.Printf("[NACK_DISCARD] Failed to unmarshal JSON: %v | body=%s", err, string(msg.Body))
-				msg.Nack(false, false) // Reject the message without requeueing
-				continue
-			}
-			action := handler(val)
-			switch action {
-			case Ack:
-				log.Printf("[ACK] message_id=%s routing_key=%s", msg.MessageId, msg.RoutingKey)
-				msg.Ack(false) // Acknowledge the message
-			case NackRequeue:
-				log.Printf("[NACK_REQUEUE] message_id=%s routing_key=%s", msg.MessageId, msg.RoutingKey)
-				msg.Nack(false, true) // Reject the message and requeue it
-			case NackDiscard:
-				log.Printf("[NACK_DISCARD] message_id=%s routing_key=%s", msg.MessageId, msg.RoutingKey)
-				msg.Nack(false, false) // Reject the message without requeueing
-			}
-		}
-	}()
-	return nil
+			err := json.Unmarshal(body, &val)
+			return val, err
+		},
+	)
 }
 
 func PublishJSON[T any](ch *amqp.Channel, exchange, key string, val T) error {
@@ -169,4 +137,92 @@ func PublishGob(ch *amqp.Channel, exchange, key string, val any) error {
 		},
 	)
 	return err
+}
+
+func SubscribeGob[T any](
+	conn *amqp.Connection,
+	exchange,
+	queueName,
+	key string,
+	queueType SimpleQueueType,
+	handler func(T) AckAction,
+) error {
+	return subscribe(
+		conn,
+		exchange,
+		queueName,
+		key,
+		queueType,
+		handler,
+		func(body []byte) (T, error) {
+			var val T
+
+			buf := bytes.NewBuffer(body)
+			dec := gob.NewDecoder(buf)
+
+			err := dec.Decode(&val)
+			return val, err
+		},
+	)
+}
+
+func subscribe[T any](
+	conn *amqp.Connection,
+	exchange,
+	queueName,
+	key string,
+	queueType SimpleQueueType,
+	handler func(T) AckAction,
+	unmarshaller func([]byte) (T, error),
+) error {
+	ch, q, err := DeclareAndBind(
+		conn,
+		exchange,
+		queueName,
+		key,
+		queueType,
+	)
+	if err != nil {
+		return err
+	}
+
+	msgs, err := ch.Consume(
+		q.Name,
+		"",
+		false,
+		false,
+		false,
+		false,
+		nil,
+	)
+	if err != nil {
+		return err
+	}
+
+	go func() {
+		for msg := range msgs {
+			val, err := unmarshaller(msg.Body)
+			if err != nil {
+				log.Printf("[NACK_DISCARD] Failed to decode: %v | body=%v", err, msg.Body)
+				msg.Nack(false, false)
+				continue
+			}
+
+			action := handler(val)
+
+			switch action {
+			case Ack:
+				log.Printf("[ACK] message_id=%s routing_key=%s", msg.MessageId, msg.RoutingKey)
+				msg.Ack(false)
+			case NackRequeue:
+				log.Printf("[NACK_REQUEUE] message_id=%s routing_key=%s", msg.MessageId, msg.RoutingKey)
+				msg.Nack(false, true)
+			case NackDiscard:
+				log.Printf("[NACK_DISCARD] message_id=%s routing_key=%s", msg.MessageId, msg.RoutingKey)
+				msg.Nack(false, false)
+			}
+		}
+	}()
+
+	return nil
 }

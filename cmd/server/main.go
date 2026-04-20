@@ -27,12 +27,24 @@ func main() {
 	defer channel.Close()
 	defer connection.Close()
 
-	_, _, err = pubsub.DeclareAndBind(
+	err = pubsub.SubscribeGob(
 		connection,
 		routing.ExchangePerilTopic,
 		routing.GameLogSlug,
-		"game_logs.*",
+		"game_logs.*", // wildcard to capture all users
 		pubsub.QueueTypeDurable,
+		func(log routing.GameLog) pubsub.AckAction {
+
+			defer fmt.Print("> ") // print new prompt after handling
+
+			err := gamelogic.WriteLog(log)
+			if err != nil {
+				fmt.Printf("failed to write log: %v\n", err)
+				return pubsub.NackRequeue
+			}
+
+			return pubsub.Ack
+		},
 	)
 	if err != nil {
 		panic(err)
